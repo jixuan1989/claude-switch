@@ -17,6 +17,7 @@ const {
   PROFILES_DIR,
 } = require('./config');
 const { addProfileWizard } = require('./wizard');
+const { checkProfile } = require('./health');
 
 function maskSecret(key, value) {
   if (key.includes('TOKEN') || key.includes('KEY') || key.includes('apiKey')) {
@@ -260,6 +261,64 @@ program
       console.error(chalk.red(`\n✗ ${e.message}\n`));
       process.exit(1);
     }
+  });
+
+program
+  .command('check [name]')
+  .description('检查第三方 profile 的连通性和可用性')
+  .action(async (name) => {
+    const profiles = name ? [name] : listProfiles();
+
+    if (profiles.length === 0) {
+      console.log(chalk.yellow('\n没有 profile 可检查\n'));
+      process.exit(0);
+    }
+
+    console.log(chalk.bold('\n健康检查:\n'));
+
+    for (const pName of profiles) {
+      const files = getProfileFiles(pName);
+      if (!files) {
+        console.log(`  ${chalk.red('✗')} ${pName} — profile 不存在`);
+        continue;
+      }
+
+      process.stdout.write(`  ⏳ ${pName} ...`);
+      const result = await checkProfile(files);
+
+      if (process.stdout.clearLine) {
+        process.stdout.clearLine(0);
+        process.stdout.cursorTo(0);
+      } else {
+        process.stdout.write('\n');
+      }
+
+      if (result.skip) {
+        console.log(`  ${chalk.blue('─')} ${pName} ${chalk.gray(result.message)}`);
+        continue;
+      }
+
+      const connOk = result.connectivity.ok;
+      const msgOk = result.messages.ok;
+
+      if (connOk && msgOk) {
+        console.log(`  ${chalk.green('✓')} ${pName} ${chalk.gray(`${result.messages.latency}ms`)}`);
+        console.log(chalk.gray(`    URL: ${result.baseUrl}`));
+        if (result.messages.model) {
+          console.log(chalk.gray(`    模型: ${result.messages.model}`));
+        }
+      } else if (connOk && !msgOk) {
+        console.log(`  ${chalk.yellow('△')} ${pName} ${chalk.yellow('连通但请求失败')}`);
+        console.log(chalk.gray(`    URL: ${result.baseUrl}`));
+        console.log(chalk.gray(`    连通性: ✓ ${result.connectivity.latency}ms`));
+        console.log(chalk.red(`    Messages: ${result.messages.status || ''} ${result.messages.error || ''}`));
+      } else {
+        console.log(`  ${chalk.red('✗')} ${pName} ${chalk.red('不可达')}`);
+        console.log(chalk.gray(`    URL: ${result.baseUrl}`));
+        console.log(chalk.red(`    错误: ${result.connectivity.error}`));
+      }
+    }
+    console.log();
   });
 
 program
